@@ -1115,6 +1115,7 @@ WHERE application_uuid = $k8sService.application_uuid
 	}))
 }
 
+
 // addressTypeForUnspecifiedCIDR returns the address type based on the provided
 // unspecified CIDR. These unspecified CIDRs are in the placeholder subnets
 // for kubernetes until they can be filled in with actual data. When that happens,
@@ -1129,6 +1130,7 @@ func addressTypeForUnspecifiedCIDR(cidr string) network.AddressType {
 		return ""
 	}
 }
+
 
 // InitialWatchStatementApplicationsWithPendingCharms returns the initial
 // namespace query for the applications with pending charms watcher.
@@ -1334,8 +1336,7 @@ SELECT ip.address_value AS &spaceAddress.address_value,
        ip.scope_id AS &spaceAddress.scope_id,
        sn.space_uuid AS &spaceAddress.space_uuid
 FROM   net_node nn
-       JOIN link_layer_device lld ON lld.net_node_uuid = nn.uuid
-       JOIN ip_address ip ON ip.device_uuid = lld.uuid
+       JOIN ip_address ip ON ip.net_node_uuid = nn.uuid
        LEFT JOIN subnet sn ON sn.uuid = ip.subnet_uuid
 WHERE  nn.uuid = $netNodeUUID.uuid;
 `, netNodeUUID, spaceAddress{})

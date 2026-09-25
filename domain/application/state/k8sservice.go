@@ -12,7 +12,6 @@ import (
 	applicationerrors "github.com/juju/juju/domain/application/errors"
 	applicationinternal "github.com/juju/juju/domain/application/internal"
 	"github.com/juju/juju/domain/ipaddress"
-	domainnetwork "github.com/juju/juju/domain/network"
 	"github.com/juju/juju/internal/errors"
 )
 
@@ -91,11 +90,7 @@ WHERE ks.uuid = $k8sService.uuid`, k8sService{})
 		if len(ipAddresses) == 0 {
 			return nil
 		}
-		deviceUUID, err := st.ensureNetNodeDevice(ctx, tx, svc.NetNodeUUID, args.DeviceUUID)
-		if err != nil {
-			return errors.Capture(err)
-		}
-		return st.insertK8sNetNodeIPAddresses(ctx, tx, svc.NetNodeUUID, deviceUUID, ipAddresses)
+		return st.insertK8sNetNodeIPAddresses(ctx, tx, svc.NetNodeUUID, ipAddresses)
 	})
 }
 
@@ -229,35 +224,7 @@ ON CONFLICT DO NOTHING`, input)
 	return errors.Capture(tx.Query(ctx, link, input).Run())
 }
 
-func (st *State) ensureNetNodeDevice(ctx context.Context, tx *sqlair.TX, netNodeUUID, deviceUUID string) (string, error) {
-	device := netNodeDevice{
-		UUID: deviceUUID, NetNodeID: netNodeUUID,
-		DeviceTypeID:      int(domainnetwork.DeviceTypeUnknown),
-		VirtualPortTypeID: int(domainnetwork.NonVirtualPortType),
-	}
-	query, err := st.Prepare(`
-SELECT lld.uuid AS &netNodeDevice.uuid
-FROM link_layer_device AS lld
-WHERE lld.net_node_uuid = $netNodeDevice.net_node_uuid`, device)
-	if err != nil {
-		return "", errors.Capture(err)
-	}
-	if err := tx.Query(ctx, query, device).Get(&device); err == nil {
-		return device.UUID, nil
-	} else if !errors.Is(err, sqlair.ErrNoRows) {
-		return "", errors.Capture(err)
-	}
-	insert, err := st.Prepare(`INSERT INTO link_layer_device (*) VALUES ($netNodeDevice.*)`, device)
-	if err != nil {
-		return "", errors.Capture(err)
-	}
-	if err := tx.Query(ctx, insert, device).Run(); err != nil {
-		return "", errors.Capture(err)
-	}
-	return device.UUID, nil
-}
-
-func (st *State) insertK8sNetNodeIPAddresses(ctx context.Context, tx *sqlair.TX, netNodeUUID, deviceUUID string, addresses []applicationinternal.Address) error {
+func (st *State) insertK8sNetNodeIPAddresses(ctx context.Context, tx *sqlair.TX, netNodeUUID string, addresses []applicationinternal.Address) error {
 	subnetUUIDs, err := st.k8sSubnetUUIDsByAddressType(ctx, tx)
 	if err != nil {
 		return errors.Capture(err)
@@ -273,7 +240,7 @@ func (st *State) insertK8sNetNodeIPAddresses(ctx context.Context, tx *sqlair.TX,
 		}
 		input := ipAddress{
 			AddressUUID: addr.UUID, Value: addr.Value, NetNodeUUID: netNodeUUID,
-			SubnetUUID: subnetUUID, DeviceID: deviceUUID,
+			SubnetUUID:   subnetUUID,
 			ConfigTypeID: int(ipaddress.MarshallConfigType(addr.ConfigType)),
 			TypeID:       int(ipaddress.MarshallAddressType(addr.AddressType())),
 			OriginID:     int(ipaddress.MarshallOrigin(network.OriginProvider)),

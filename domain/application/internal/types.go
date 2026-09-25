@@ -16,7 +16,6 @@ import (
 type UpsertK8sServiceArgs struct {
 	ServiceUUID string
 	NetNodeUUID string
-	DeviceUUID  string
 	Addresses   []Address
 }
 

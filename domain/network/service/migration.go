@@ -12,7 +12,6 @@ import (
 	"github.com/juju/juju/core/logger"
 	corenetwork "github.com/juju/juju/core/network"
 	"github.com/juju/juju/core/trace"
-	"github.com/juju/juju/domain/network"
 	networkerrors "github.com/juju/juju/domain/network/errors"
 	"github.com/juju/juju/domain/network/internal"
 	"github.com/juju/juju/internal/errors"
@@ -46,6 +45,12 @@ type MigrationState interface {
 	// ImportLinkLayerDevices adds link layer devices into the model as part
 	// of the migration import process.
 	ImportLinkLayerDevices(ctx context.Context, input []internal.ImportLinkLayerDevice) error
+
+	// ImportNetNodeAddresses imports IP addresses tied to net nodes without
+	// any link layer device, as part of the migration import process. This
+	// is the Kubernetes case: pods and services have no OS-level NIC
+	// managed by Juju.
+	ImportNetNodeAddresses(ctx context.Context, input []internal.ImportNetNodeAddresses) error
 }
 
 // MigrationService provides the API for model migration actions within
@@ -244,28 +249,51 @@ func (s *MigrationService) ImportK8sServices(ctx context.Context, services []int
 	ctx, span := trace.Start(ctx, trace.NameFromFunc())
 	defer span.End()
 
-	// Convert services parameter in internal.ImportLinkLayerDevice with
-	// placeholder device to host addresses then call
-	//   st.ImportLinkLayerDevices
-	llds, err := s.getPlaceholderLinkLayerDevices(ctx, services)
-	if err != nil {
-		return errors.Errorf("converting services: %w", err)
+	var subnetUUIDByAddressType map[corenetwork.AddressType]string
+	nodeAddresses := make([]internal.ImportNetNodeAddresses, 0, len(services))
+	for _, service := range services {
+		addresses := make([]internal.ImportIPAddress, 0, len(service.Addresses))
+		for _, addr := range service.Addresses {
+			if corenetwork.AddressType(addr.Type) == corenetwork.HostName {
+				if addr.Scope != string(corenetwork.ScopeCloudLocal) && addr.Scope != string(corenetwork.ScopePublic) {
+					return errors.Errorf("unsupported Service hostname scope %q", addr.Scope).Add(coreerrors.NotValid)
+				}
+				continue
+			}
+			if subnetUUIDByAddressType == nil {
+				var err error
+				subnetUUIDByAddressType, err = s.getSubnetUUIDByAddressType(ctx)
+				if err != nil {
+					return errors.Errorf("getting subnet UUIDs: %w", err)
+				}
+			}
+			transformed, err := s.transformK8sServiceAddress(addr, subnetUUIDByAddressType)
+			if err != nil {
+				return errors.Errorf("converting address %q for %q k8s service: %w",
+					addr.Value, service.ApplicationName, err)
+			}
+			addresses = append(addresses, transformed)
+		}
+		nodeAddresses = append(nodeAddresses, internal.ImportNetNodeAddresses{
+			NetNodeUUID: service.NetNodeUUID,
+			Addresses:   addresses,
+		})
 	}
 
 	// Create the k8s_services and nodes through a call to state (can take
 	// directly []ImportK8sService)
-	err = s.st.CreateK8sServices(ctx, services)
+	err := s.st.CreateK8sServices(ctx, services)
 	if err != nil {
 		return errors.Errorf("creating k8s services: %w", err)
 	}
-	err = s.st.ImportLinkLayerDevices(ctx, llds)
+	err = s.st.ImportNetNodeAddresses(ctx, nodeAddresses)
 	if err != nil {
-		return errors.Errorf("importing link layer devices: %w", err)
+		return errors.Errorf("importing k8s service addresses: %w", err)
 	}
 	return nil
 }
 
-func (s *MigrationService) getPlaceholderSubnetUUIDByAddressType(ctx context.Context) (map[corenetwork.AddressType]string, error) {
+func (s *MigrationService) getSubnetUUIDByAddressType(ctx context.Context) (map[corenetwork.AddressType]string, error) {
 	subnets, err := s.st.GetAllSubnets(ctx)
 	if err != nil {
 		return nil, errors.Errorf("getting all subnets: %w", err)
@@ -300,55 +328,6 @@ func (s *MigrationService) getPlaceholderSubnetUUIDByAddressType(ctx context.Con
 	}
 
 	return result, nil
-}
-
-// getPlaceholderLinkLayerDevices processes the list of cloud services to
-// generate placeholder link layer devices for migrated K8sServices
-func (s *MigrationService) getPlaceholderLinkLayerDevices(
-	ctx context.Context,
-	services []internal.ImportK8sService,
-) ([]internal.ImportLinkLayerDevice, error) {
-	var subnetUUIDByAddressType map[corenetwork.AddressType]string
-	devices := make([]internal.ImportLinkLayerDevice, 0, len(services))
-	for _, service := range services {
-		transformedAddresses := make([]internal.ImportIPAddress, 0, len(service.Addresses))
-		for _, addr := range service.Addresses {
-			if corenetwork.AddressType(addr.Type) == corenetwork.HostName {
-				if addr.Scope != string(corenetwork.ScopeCloudLocal) && addr.Scope != string(corenetwork.ScopePublic) {
-					return nil, errors.Errorf("unsupported Service hostname scope %q", addr.Scope).Add(coreerrors.NotValid)
-				}
-				continue
-			}
-			if subnetUUIDByAddressType == nil {
-				var err error
-				subnetUUIDByAddressType, err = s.getPlaceholderSubnetUUIDByAddressType(ctx)
-				if err != nil {
-					return nil, errors.Errorf("getting placeholder subnet UUIDs: %w", err)
-				}
-			}
-			transformedAddr, err := s.transformK8sServiceAddress(addr, subnetUUIDByAddressType)
-			if err != nil {
-				return nil, errors.Errorf("converting address %q for %q k8s service: %w",
-					addr.Value,
-					service.ApplicationName,
-					err)
-			}
-			transformedAddresses = append(transformedAddresses, transformedAddr)
-		}
-
-		device := internal.ImportLinkLayerDevice{
-			UUID:            service.DeviceUUID,
-			IsAutoStart:     true,
-			IsEnabled:       true,
-			NetNodeUUID:     service.NetNodeUUID,
-			Type:            network.DeviceTypeUnknown,
-			VirtualPortType: corenetwork.NonVirtualPort,
-			Addresses:       transformedAddresses,
-		}
-		devices = append(devices, device)
-	}
-
-	return devices, nil
 }
 
 // transformK8sServiceAddress transforms an ImportK8sServiceAddress by

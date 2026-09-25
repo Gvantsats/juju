@@ -12,7 +12,7 @@ import (
 	"github.com/juju/tc"
 
 	exportstate "github.com/juju/juju/domain/export/state/model"
-	"github.com/juju/juju/domain/export/types/v4_1_0"
+	"github.com/juju/juju/domain/export/types/v4_2_0"
 	importstate "github.com/juju/juju/domain/modelimport/state/model"
 	schematesting "github.com/juju/juju/domain/schema/testing"
 )
@@ -52,40 +52,40 @@ func (s *roundTripSuite) TestImportExportRoundTrip(c *tc.C) {
 	s.bootstrapModel(c)
 	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 
-	payload := &v4_1_0.ModelExport{
-		Application: []v4_1_0.Application{{
+	payload := &v4_2_0.ModelExport{
+		Application: []v4_2_0.Application{{
 			UUID: appUUID, Name: "test-app", LifeID: 0, CharmUUID: charmUUID,
 			SpaceUUID: "656b4a82-e28c-53d6-a014-f0dd53417eb6",
 		}},
-		Charm: []v4_1_0.Charm{{
+		Charm: []v4_2_0.Charm{{
 			UUID: charmUUID, SourceID: 1, Revision: 1,
 			ReferenceName: "test-charm", CreateTime: now,
 		}},
-		CharmResource: []v4_1_0.CharmResource{{
+		CharmResource: []v4_2_0.CharmResource{{
 			CharmUUID: charmUUID, Name: resourceName, KindID: 0,
 		}},
-		NetNode: []v4_1_0.NetNode{{UUID: netNodeUUID}},
-		Resource: []v4_1_0.Resource{{
+		NetNode: []v4_2_0.NetNode{{UUID: netNodeUUID}},
+		Resource: []v4_2_0.Resource{{
 			UUID: resourceUUID, CharmUUID: charmUUID,
 			CharmResourceName: resourceName, OriginTypeID: 0,
 			StateID: 0, CreatedAt: now,
 		}},
-		Sequence: []v4_1_0.Sequence{
+		Sequence: []v4_2_0.Sequence{
 			{Namespace: "machine", Value: 7},
 			{Namespace: "unit", Value: 3},
 		},
-		Space: []v4_1_0.Space{
+		Space: []v4_2_0.Space{
 			{UUID: userSpaceUUID, Name: "user-space"},
 		},
-		ProviderSpace: []v4_1_0.ProviderSpace{
+		ProviderSpace: []v4_2_0.ProviderSpace{
 			{ProviderID: "provider-1", SpaceUUID: userSpaceUUID},
 		},
-		Unit: []v4_1_0.Unit{{
+		Unit: []v4_2_0.Unit{{
 			UUID: unitUUID, Name: "test-app/0", LifeID: 0,
 			ApplicationUUID: appUUID, NetNodeUUID: netNodeUUID,
 			CharmUUID: charmUUID,
 		}},
-		UnitResource: []v4_1_0.UnitResource{{
+		UnitResource: []v4_2_0.UnitResource{{
 			ResourceUUID: resourceUUID, UnitUUID: unitUUID,
 			CharmResourceName: resourceName, AddedAt: now,
 		}},
@@ -120,6 +120,56 @@ func (s *roundTripSuite) TestImportExportRoundTrip(c *tc.C) {
 	}
 	c.Check(userSpaces, tc.Equals, 1)
 	c.Check(alphaSpaces, tc.Equals, 1)
+}
+
+// TestDeviceLessAddressRoundTrip covers the Kubernetes case: pod and service
+// addresses carry no link-layer device (device_uuid is NULL). The payload must
+// round-trip without the exporter collapsing NULL to an empty string, which
+// would fail the ip_address device foreign key on import.
+func (s *roundTripSuite) TestDeviceLessAddressRoundTrip(c *tc.C) {
+	const (
+		nodeUUID = "22222222-2222-2222-2222-222222222222"
+		addrUUID = "33333333-3333-3333-3333-333333333333"
+	)
+	s.bootstrapModel(c)
+
+	err := s.TxnRunner().StdTxn(c.Context(), func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO net_node (uuid) VALUES (?)`, nodeUUID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+INSERT INTO ip_address (uuid, net_node_uuid, device_uuid, address_value,
+    type_id, config_type_id, origin_id, scope_id)
+VALUES (?, ?, NULL, "10.0.0.1/24", 0, 4, 1, 2)
+`, addrUUID, nodeUUID)
+		return err
+	})
+	c.Assert(err, tc.ErrorIsNil)
+
+	exportSt := exportstate.NewState(s.TxnRunnerFactory())
+	exported, err := exportSt.Export(c.Context())
+	c.Assert(err, tc.ErrorIsNil)
+	c.Assert(exported.IpAddress, tc.HasLen, 1)
+	c.Check(exported.IpAddress[0].DeviceUUID, tc.IsNil)
+
+	// Wipe and re-import the exported payload.
+	err = s.TxnRunner().StdTxn(c.Context(), func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM ip_address`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM net_node`)
+		return err
+	})
+	c.Assert(err, tc.ErrorIsNil)
+
+	importSt := importstate.NewState(s.TxnRunnerFactory())
+	err = importSt.Import(c.Context(), exported)
+	c.Assert(err, tc.ErrorIsNil)
+
+	reexported, err := exportSt.Export(c.Context())
+	c.Assert(err, tc.ErrorIsNil)
+	c.Check(reexported.IpAddress, tc.DeepEquals, exported.IpAddress)
 }
 
 func (s *roundTripSuite) bootstrapModel(c *tc.C) {

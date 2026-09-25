@@ -898,14 +898,9 @@ func (s *Service) UpdateK8sService(ctx context.Context, appName, providerID stri
 	if err != nil {
 		return errors.Capture(err)
 	}
-	deviceUUID, err := uuid.NewUUID()
-	if err != nil {
-		return errors.Capture(err)
-	}
 	args := internal.UpsertK8sServiceArgs{
 		ServiceUUID: serviceUUID.String(),
 		NetNodeUUID: netNodeUUID.String(),
-		DeviceUUID:  deviceUUID.String(),
 	}
 	for _, addr := range sAddrs {
 		if addr.AddressType() == network.HostName {

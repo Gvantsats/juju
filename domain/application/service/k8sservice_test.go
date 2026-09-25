@@ -45,7 +45,6 @@ func (s *applicationServiceSuite) TestUpdateK8sServiceAllocatesUUIDs(c *tc.C) {
 		func(_ context.Context, _, _ string, args internal.UpsertK8sServiceArgs) error {
 			c.Check(args.ServiceUUID, tc.IsNonZeroUUID)
 			c.Check(args.NetNodeUUID, tc.IsNonZeroUUID)
-			c.Check(args.DeviceUUID, tc.IsNonZeroUUID)
 			c.Assert(args.Addresses, tc.HasLen, 2)
 			for i, addr := range args.Addresses {
 				c.Check(addr.UUID, tc.IsNonZeroUUID)
