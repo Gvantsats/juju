@@ -65,7 +65,6 @@ func (s *unitStateSuite) assertContainerAddressValues(
 	configType ipaddress.ConfigType,
 ) {
 	var (
-		gotDeviceName string
 		gotProviderID string
 		gotValue      string
 		gotType       int
@@ -77,17 +76,15 @@ func (s *unitStateSuite) assertContainerAddressValues(
 	err := s.TxnRunner().StdTxn(c.Context(), func(ctx context.Context, tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `
 
-SELECT cc.provider_id, lld.name, a.address_value, a.type_id, a.origin_id,a.scope_id,a.config_type_id,s.cidr
+SELECT cc.provider_id, a.address_value, a.type_id, a.origin_id,a.scope_id,a.config_type_id,s.cidr
 FROM k8s_pod AS cc
 JOIN unit AS u ON cc.unit_uuid = u.uuid
-JOIN link_layer_device AS lld ON lld.net_node_uuid = u.net_node_uuid
-JOIN ip_address AS a ON a.device_uuid = lld.uuid
+JOIN ip_address AS a ON a.net_node_uuid = u.net_node_uuid
 JOIN subnet AS s ON a.subnet_uuid = s.uuid
 WHERE u.name=?`,
 
 			unitName).Scan(
 			&gotProviderID,
-			&gotDeviceName,
 			&gotValue,
 			&gotType,
 			&gotOrigin,
@@ -99,9 +96,6 @@ WHERE u.name=?`,
 	})
 	c.Assert(err, tc.ErrorIsNil)
 	c.Check(gotProviderID, tc.Equals, providerID)
-	// Placeholder devices for cloud containers must never carry a name,
-	// otherwise it leaks via network-get.
-	c.Check(gotDeviceName, tc.Equals, "")
 	c.Check(gotValue, tc.Equals, addressValue)
 	c.Check(gotType, tc.Equals, int(addressType))
 	c.Check(gotOrigin, tc.Equals, int(addressOrigin))
@@ -151,11 +145,6 @@ func (s *unitStateSuite) TestUpdateCAASUnitK8sPod(c *tc.C) {
 			ProviderID: "some-id",
 			Ports:      new([]string{"666", "668"}),
 			Address: new(application.K8sPodAddress{
-				Device: application.K8sPodDevice{
-					Name:              "",
-					DeviceTypeID:      domainnetwork.DeviceTypeUnknown,
-					VirtualPortTypeID: domainnetwork.NonVirtualPortType,
-				},
 				Value:       "10.6.6.6/8",
 				AddressType: ipaddress.AddressTypeIPv4,
 				ConfigType:  ipaddress.ConfigTypeDHCP,
@@ -478,7 +467,6 @@ func (s *unitStateSuite) assertCAASUnit(c *tc.C, name, passwordHash, addressValu
 	var (
 		gotPasswordHash  string
 		gotAddress       string
-		gotDeviceName    string
 		gotAddressType   ipaddress.AddressType
 		gotAddressScope  ipaddress.Scope
 		gotAddressOrigin ipaddress.Origin
@@ -493,11 +481,10 @@ func (s *unitStateSuite) assertCAASUnit(c *tc.C, name, passwordHash, addressValu
 			return errors.Errorf("failed to get password hash: %v", err)
 		}
 		err = tx.QueryRowContext(ctx, `
-SELECT address_value, lld.name, type_id, scope_id, origin_id FROM ip_address ipa
-JOIN link_layer_device lld ON lld.uuid = ipa.device_uuid
-JOIN unit u ON u.net_node_uuid = lld.net_node_uuid WHERE u.name = ?
+SELECT address_value, type_id, scope_id, origin_id FROM ip_address ipa
+JOIN unit u ON u.net_node_uuid = ipa.net_node_uuid WHERE u.name = ?
 `, name).
-			Scan(&gotAddress, &gotDeviceName, &gotAddressType, &gotAddressScope, &gotAddressOrigin)
+			Scan(&gotAddress, &gotAddressType, &gotAddressScope, &gotAddressOrigin)
 		if err != nil {
 			return errors.Errorf("failed to get address value: %v", err)
 		}
@@ -523,9 +510,6 @@ JOIN unit u ON u.uuid = cc.unit_uuid WHERE u.name = ?
 	c.Assert(err, tc.ErrorIsNil)
 	c.Check(gotPasswordHash, tc.Equals, passwordHash)
 	c.Check(gotAddress, tc.Equals, addressValue)
-	// Placeholder devices for cloud containers must never carry a name,
-	// otherwise it leaks via network-get.
-	c.Check(gotDeviceName, tc.Equals, "")
 	c.Check(gotAddressType, tc.Equals, ipaddress.AddressTypeIPv4)
 	c.Check(gotAddressScope, tc.Equals, ipaddress.ScopeMachineLocal)
 	c.Check(gotAddressOrigin, tc.Equals, ipaddress.OriginProvider)
@@ -1943,11 +1927,6 @@ func (s *unitStateSuite) TestGetUnitK8sPodInfo(c *tc.C) {
 			ProviderID: "some-id",
 			Ports:      new([]string{"666", "668"}),
 			Address: new(application.K8sPodAddress{
-				Device: application.K8sPodDevice{
-					Name:              "placeholder",
-					DeviceTypeID:      domainnetwork.DeviceTypeUnknown,
-					VirtualPortTypeID: domainnetwork.NonVirtualPortType,
-				},
 				Value:       "10.6.6.6/24",
 				AddressType: ipaddress.AddressTypeIPv4,
 				ConfigType:  ipaddress.ConfigTypeDHCP,

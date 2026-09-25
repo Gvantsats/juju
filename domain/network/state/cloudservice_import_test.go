@@ -35,14 +35,12 @@ func (s *k8sServiceImportSuite) TestCreateK8sServices(c *tc.C) {
 	args := []internal.ImportK8sService{
 		{
 			UUID:            "service-uuid-1",
-			DeviceUUID:      "device-uuid-1",
 			NetNodeUUID:     "net-node-uuid-1",
 			ApplicationName: "super-app-1",
 			ProviderID:      "provider-id-1",
 		},
 		{
 			UUID:            "service-uuid-2",
-			DeviceUUID:      "device-uuid-2",
 			NetNodeUUID:     "net-node-uuid-2",
 			ApplicationName: "super-app-2",
 			ProviderID:      "provider-id-2",

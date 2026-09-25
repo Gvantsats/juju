@@ -4,6 +4,7 @@
 package state
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/juju/tc"
@@ -93,7 +94,7 @@ func (s *typesSuite) TestNetAddrToDMLSuccess(c *tc.C) {
 	c.Check(dml, tc.DeepEquals, ipAddressDML{
 		UUID:         "some-addr-uuid",
 		NodeUUID:     "some-node-uuid",
-		DeviceUUID:   "some-device-uuid",
+		DeviceUUID:   sql.NullString{String: "some-device-uuid", Valid: true},
 		AddressValue: "10.0.0.13/24",
 		SubnetUUID:   nil,
 		TypeID:       0,
