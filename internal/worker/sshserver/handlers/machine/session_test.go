@@ -119,6 +119,7 @@ func (s *machineSuite) TestSessionHandlerProxiesPTYAndWindowChanges(c *tc.C) {
 	c.Assert(err, tc.ErrorIsNil)
 	ptyCalled := make(chan struct{})
 	sessionStarted := make(chan struct{})
+	holdOpen := make(chan struct{})
 
 	machine := startSSHTestServer(c, &ssh.Server{
 		PtyCallback: func(_ ssh.Context, pty ssh.Pty) bool {
@@ -131,6 +132,11 @@ func (s *machineSuite) TestSessionHandlerProxiesPTYAndWindowChanges(c *tc.C) {
 		Handler: func(session ssh.Session) {
 			close(sessionStarted)
 			_, _ = io.WriteString(session, "shell done\n")
+			// Keep the backend session open until the test has exercised
+			// window changes, otherwise the proxied session can be torn
+			// down before the client sends the window change, resulting
+			// in EOF.
+			<-holdOpen
 		},
 	})
 
@@ -159,13 +165,19 @@ func (s *machineSuite) TestSessionHandlerProxiesPTYAndWindowChanges(c *tc.C) {
 	case <-c.Context().Done():
 		c.Fatal("timed out waiting for pty callback to be called")
 	}
-	c.Assert(session.WindowChange(30, 100), tc.ErrorIsNil)
 
 	select {
 	case <-sessionStarted:
 	case <-c.Context().Done():
 		c.Fatal("timed out waiting for shell to start")
 	}
+
+	// With the remote shell running and holding the session open, the
+	// window change is proxied to the machine without error.
+	c.Assert(session.WindowChange(30, 100), tc.ErrorIsNil)
+
+	// Allow the backend session to finish.
+	close(holdOpen)
 	c.Assert(session.Wait(), tc.ErrorIsNil)
 	c.Check(stdout.String(), tc.Equals, "shell done\r\n")
 }
