@@ -279,7 +279,7 @@ Optionally enrich each PR with title and author:
 
 ```bash
 gh pr view NUMBER --repo juju/juju --json title,author \
-  --jq '"\(.title) — @\(.author.login)"'
+  --jq '"\(.title) — \(.author.login)"'
 ```
 
 ### Output The PR Description
@@ -298,8 +298,8 @@ Merge-forward: SOURCE → TARGET
 
 ### Included PRs
 
-- #XXXXX @author — <title>
-- #YYYYY @author — <title>
+- #XXXXX author — <title>
+- #YYYYY author — <title>
 ...
 
 ### Conflicts resolved
